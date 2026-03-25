@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>タスク管理</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #faf8f4; }
+    button:hover { opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const COLUMNS = ["未着手", "進行中", "完了"];
+    const PRIORITIES = ["高", "中", "低"];
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzfwmqm6pgwnvmBLvxnXlGrm0lK98zcAWo5k4K9ub0zFbxb62YJ0ai6yMBTWzkEtu4WyQ/exec";
+
+    const BOARDS = [
+      { id: "office",  label: "事務所",       icon: "🌳", hasTabs: false },
+      { id: "ue",      label: "UE",           icon: "💉", hasTabs: true  },
+      { id: "others",  label: "クライアント", icon: "⭐", hasTabs: true  },
+      { id: "private", label: "PV",           icon: "🐻", hasTabs: false },
+    ];
+
+    const BOARD_THEME = {
+      office:  { main: "#c8a820", light: "#fdf8e0", border: "#e8d870", text: "#5a480a" },
+      ue:      { main: "#d4b030", light: "#fefae8", border: "#ecd880", text: "#5a4a0a" },
+      others:  { main: "#c4903a", light: "#fdf4e0", border: "#e8c870", text: "#5a3a0a" },
+      private: { main: "#c47a5a", light: "#fdf2ec", border: "#e8b89a", text: "#5a2e18" },
+    };
+
+    const COL_THEME = {
+      未着手: { bg: "#faf8f4", border: "#d4c9b0", header: "#b0a488", headerText: "#fff" },
+      進行中: { bg: "#fdf8e0", border: "#e8d870", header: "#c8a820", headerText: "#fff" },
+      完了:   { bg: "#fdf4e0", border: "#e8c870", header: "#c4903a", headerText: "#fff" },
+    };
+
+    const PRIORITY_THEME = {
+      高: { bg: "#fef2ee", border: "#f0c0a8", text: "#a03820" },
+      中: { bg: "#fefae8", border: "#ecd880", text: "#7a5a00" },
+      低: { bg: "#fdf8e0", border: "#e8d870", text: "#6a4e00" },
+    };
+
+    const DEFAULT_CLIENTS = {
+      ue:     ["UE本社", "UE支店"],
+      others: ["顧問先A", "顧問先B"],
+    };
+
+    function today() { return new Date(new Date().toDateString()); }
+    function daysUntil(d) { if (!d) return null; return Math.ceil((new Date(d) - today()) / 86400000); }
+    function isUrgent(t) { if (t.status === "完了") return false; const d = daysUntil(t.deadline); return d !== null && d <= 3; }
+    function fmtDate(d) { if (!d) return ""; const dt = new Date(d); return `${dt.getMonth()+1}/${dt.getDate()}`; }
+
+    async function loadFromGAS() {
+      const res = await fetch(GAS_URL);
+      return await res.json();
+    }
+    async function saveToGAS(data) {
+      await fetch(GAS_URL, { method: "POST", body: JSON.stringify(data) });
+    }
+
+    function TaskCard({ task, onEdit, onDelete, onMove }) {
+      const d = daysUntil(task.deadline);
+      const overdue = d !== null && d < 0 && task.status !== "完了";
+      const soon = d !== null && d >= 0 && d <= 3 && task.status !== "完了";
+      const pt = PRIORITY_THEME[task.priority];
+      return (
+        <div style={{ background: "#fff", border: "1px solid #e8e2d4", borderRadius: 10, padding: "10px 12px", marginBottom: 8, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#3d3528", flex: 1, lineHeight: 1.4 }}>{task.title}</span>
+            <div style={{ display: "flex", gap: 4, marginLeft: 6 }}>
+              <button onClick={() => onEdit(task)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#aaa" }}>✏️</button>
+              <button onClick={() => onDelete(task.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#aaa" }}>🗑️</button>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, background: pt.bg, border: `1px solid ${pt.border}`, color: pt.text, fontWeight: 600 }}>{task.priority}</span>
+            {task.client && <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, background: "#f0ece4", border: "1px solid #d4c9b0", color: "#6b5e48" }}>{task.client}</span>}
+            {task.deadline && (
+              <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, fontWeight: overdue || soon ? 700 : 400,
+                background: overdue ? "#fdf0ee" : soon ? "#fdf6e8" : "#f5f2eb",
+                border: `1px solid ${overdue ? "#e8b4ae" : soon ? "#e0c87a" : "#d4c9b0"}`,
+                color: overdue ? "#8a3a30" : soon ? "#7a5a18" : "#7a6a54" }}>
+                📅 {fmtDate(task.deadline)}{overdue ? " 期限切れ" : soon ? ` あと${d}日` : ""}
+              </span>
+            )}
+            {task.today && !isUrgent(task) && <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, background: "#fdf0f4", border: "1px solid #f0c0d0", color: "#a04060" }}>✋ 今日やる</span>}
+          </div>
+          {task.memo && <p style={{ fontSize: 11, color: "#a09880", margin: "4px 0 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.memo}</p>}
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {COLUMNS.filter(c => c !== task.status).map(c => (
+              <button key={c} onClick={() => onMove(task.id, c)}
+                style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#f5f2eb", border: "1px solid #d4c9b0", color: "#7a6a54", cursor: "pointer" }}>
+                → {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function TaskForm({ boardId, clients, editTask, onSave, onClose }) {
+      const board = BOARDS.find(b => b.id === boardId);
+      const bt = BOARD_THEME[boardId];
+      const [form, setForm] = useState(editTask ? { ...editTask } : {
+        title: "", priority: "中", deadline: "", memo: "", status: "未着手",
+        client: clients?.[0] || "", today: false,
+      });
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+      const inputStyle = { width: "100%", border: "1px solid #d4c9b0", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", background: "#faf8f4", boxSizing: "border-box" };
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(60,50,30,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 420, boxShadow: "0 8px 32px rgba(0,0,0,0.15)" }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: "#3d3528", marginBottom: 16 }}>
+              {board?.icon} {editTask ? "タスクを編集" : "タスクを追加"} <span style={{ fontSize: 13, fontWeight: 400, color: "#9a8a74" }}>— {board?.label}</span>
+            </h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, color: "#9a8a74", fontWeight: 600 }}>タスク名 *</label>
+                <input value={form.title} onChange={e => set("title", e.target.value)} style={{ ...inputStyle, marginTop: 4 }} placeholder="タスク名を入力" />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#9a8a74", fontWeight: 600 }}>優先度</label>
+                  <select value={form.priority} onChange={e => set("priority", e.target.value)} style={{ ...inputStyle, marginTop: 4 }}>
+                    {PRIORITIES.map(p => <option key={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#9a8a74", fontWeight: 600 }}>ステータス</label>
+                  <select value={form.status} onChange={e => set("status", e.target.value)} style={{ ...inputStyle, marginTop: 4 }}>
+                    {COLUMNS.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              {board?.hasTabs && clients?.length > 0 && (
+                <div>
+                  <label style={{ fontSize: 11, color: "#9a8a74", fontWeight: 600 }}>顧問先</label>
+                  <select value={form.client} onChange={e => set("client", e.target.value)} style={{ ...inputStyle, marginTop: 4 }}>
+                    {clients.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label style={{ fontSize: 11, color: "#9a8a74", fontWeight: 600 }}>期限日</label>
+                <input type="date" value={form.deadline} onChange={e => set("deadline", e.target.value)} style={{ ...inputStyle, marginTop: 4 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#9a8a74", fontWeight: 600 }}>メモ</label>
+                <textarea value={form.memo} onChange={e => set("memo", e.target.value)} style={{ ...inputStyle, marginTop: 4, resize: "none" }} rows={2} placeholder="メモ（任意）" />
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#6b5e48", cursor: "pointer" }}>
+                <input type="checkbox" checked={form.today || false} onChange={e => set("today", e.target.checked)} />
+                今日やるタスクとしてマーク
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+              <button onClick={() => { if (form.title.trim()) onSave(form); }}
+                style={{ flex: 1, background: bt.main, color: "#fff", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                {editTask ? "保存" : "追加"}
+              </button>
+              <button onClick={onClose}
+                style={{ flex: 1, background: "#f0ece4", color: "#6b5e48", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function KanbanBoard({ boardId, tasks, onAdd, onEdit, onDelete, onMove, filterClient, sortBy, filterPriority }) {
+      const getColTasks = (col) => {
+        let arr = tasks.filter(t => t.status === col && (!filterClient || t.client === filterClient) && (!filterPriority || t.priority === filterPriority));
+        if (sortBy === "priority") arr = arr.sort((a, b) => PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority));
+        if (sortBy === "deadline") arr = arr.sort((a, b) => { if (!a.deadline) return 1; if (!b.deadline) return -1; return new Date(a.deadline) - new Date(b.deadline); });
+        return arr;
+      };
+      return (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+          {COLUMNS.map(col => {
+            const ct = COL_THEME[col];
+            const colTasks = getColTasks(col);
+            return (
+              <div key={col} style={{ background: ct.bg, border: `1px solid ${ct.border}`, borderRadius: 14, padding: 12, minHeight: 200 }}>
+                <div style={{ background: ct.header, color: ct.headerText, borderRadius: 8, padding: "6px 12px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, fontWeight: 600 }}>
+                  <span>{col}</span>
+                  <span style={{ background: "rgba(255,255,255,0.25)", borderRadius: 20, padding: "1px 8px", fontSize: 12 }}>{colTasks.length}</span>
+                </div>
+                {colTasks.map(task => (
+                  <TaskCard key={task.id} task={task} onEdit={onEdit} onDelete={onDelete} onMove={onMove} />
+                ))}
+                {colTasks.length === 0 && <p style={{ fontSize: 12, color: "#c0b09a", textAlign: "center", padding: "16px 0" }}>なし</p>}
+                {col === "未着手" && (
+                  <button onClick={() => onAdd(boardId)}
+                    style={{ width: "100%", marginTop: 4, padding: "8px 0", background: "transparent", border: `1.5px dashed ${ct.border}`, borderRadius: 8, color: "#a09880", fontSize: 12, cursor: "pointer" }}>
+                    ＋ 追加
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function ClientManager({ clients, onChange }) {
+      const [newName, setNewName] = useState("");
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {clients.map(c => (
+            <span key={c} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, background: "#f0ece4", border: "1px solid #d4c9b0", borderRadius: 20, padding: "3px 10px", color: "#6b5e48" }}>
+              {c}
+              <button onClick={() => onChange(clients.filter(x => x !== c))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a09880", fontSize: 13, lineHeight: 1 }}>×</button>
+            </span>
+          ))}
+          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="顧問先を追加"
+            style={{ fontSize: 12, border: "1px solid #d4c9b0", borderRadius: 20, padding: "4px 12px", width: 120, outline: "none", background: "#faf8f4" }} />
+          <button onClick={() => { if (newName.trim() && !clients.includes(newName.trim())) { onChange([...clients, newName.trim()]); setNewName(""); } }}
+            style={{ fontSize: 12, background: "#c8a820", color: "#fff", border: "none", borderRadius: 20, padding: "4px 12px", cursor: "pointer" }}>追加</button>
+        </div>
+      );
+    }
+
+    function App() {
+      const [page, setPage] = useState("home");
+      const [tasks, setTasks] = useState([]);
+      const [clients, setClients] = useState({ ue: [...DEFAULT_CLIENTS.ue], others: [...DEFAULT_CLIENTS.others] });
+      const [loaded, setLoaded] = useState(false);
+      const [saving, setSaving] = useState(false);
+      const [form, setForm] = useState(null);
+      const [activeClient, setActiveClient] = useState({ ue: null, others: null });
+      const [sortBy, setSortBy] = useState("");
+      const [filterPriority, setFilterPriority] = useState("");
+
+      useEffect(() => {
+        const timeout = setTimeout(() => setLoaded(true), 5000);
+        (async () => {
+          try {
+            const d = await loadFromGAS();
+            setTasks(d.tasks || []);
+            setClients(d.clients || { ue: [...DEFAULT_CLIENTS.ue], others: [...DEFAULT_CLIENTS.others] });
+          } catch (e) { console.error("読み込み失敗", e); }
+          clearTimeout(timeout);
+          setLoaded(true);
+        })();
+        return () => clearTimeout(timeout);
+      }, []);
+
+      useEffect(() => {
+        if (!loaded) return;
+        setSaving(true);
+        const timer = setTimeout(async () => {
+          try { await saveToGAS({ tasks, clients }); } catch (e) { console.error("保存失敗", e); }
+          setSaving(false);
+        }, 1000);
+        return () => clearTimeout(timer);
+      }, [tasks, clients, loaded]);
+
+      const addTask = (boardId, data) => setTasks(ts => [...ts, { ...data, id: Date.now(), boardId }]);
+      const editTaskSave = (data) => setTasks(ts => ts.map(t => t.id === form.editTask.id ? { ...data, id: t.id, boardId: t.boardId } : t));
+      const deleteTask = (id) => setTasks(ts => ts.filter(t => t.id !== id));
+      const moveTask = (id, status) => setTasks(ts => ts.map(t => t.id === id ? { ...t, status } : t));
+      const handleSave = (data) => { if (form.editTask) editTaskSave(data); else addTask(form.boardId, data); setForm(null); };
+      const setClientsFor = (boardId, arr) => { setClients(c => ({ ...c, [boardId]: arr })); setActiveClient(ac => ({ ...ac, [boardId]: arr.includes(ac[boardId]) ? ac[boardId] : null })); };
+      const getAC = (boardId) => activeClient[boardId] ?? null;
+      const todayTasks = tasks.filter(t => t.status !== "完了" && (t.today || isUrgent(t)));
+
+      if (!loaded) return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", background: "#faf8f4", color: "#9a8a74", fontSize: 14, gap: 12 }}>
+          <div style={{ fontSize: 32 }}>☕</div>
+          <p>データを読み込み中...</p>
+        </div>
+      );
+
+      const NavBar = () => (
+        <nav style={{ background: "#f0ebe0", borderBottom: "1px solid #d4c9b0", position: "sticky", top: 0, zIndex: 40 }}>
+          <div style={{ maxWidth: 960, margin: "0 auto", padding: "10px 16px", display: "flex", gap: 6, alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", overflowX: "auto" }}>
+              <button onClick={() => setPage("home")}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+                  background: page === "home" ? "#d4688a" : "transparent", color: page === "home" ? "#fff" : "#6b5e48" }}>
+                🗓 今日のタスク
+                {todayTasks.length > 0 && <span style={{ background: page === "home" ? "rgba(255,255,255,0.3)" : "#c0392b", color: "#fff", borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>{todayTasks.length}</span>}
+              </button>
+              <span style={{ color: "#d4c9b0", margin: "0 4px" }}>|</span>
+              {BOARDS.map(b => {
+                const bt = BOARD_THEME[b.id];
+                const count = tasks.filter(t => t.boardId === b.id && t.status !== "完了").length;
+                return (
+                  <button key={b.id} onClick={() => setPage(b.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+                      background: page === b.id ? bt.main : "transparent", color: page === b.id ? "#fff" : "#6b5e48" }}>
+                    {b.icon} {b.label}
+                    {count > 0 && <span style={{ background: page === b.id ? "rgba(255,255,255,0.25)" : "#d4c9b0", color: page === b.id ? "#fff" : "#6b5e48", borderRadius: 20, padding: "1px 7px", fontSize: 11 }}>{count}</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {saving && <span style={{ fontSize: 11, color: "#c8a820", whiteSpace: "nowrap" }}>💾 保存中...</span>}
+          </div>
+        </nav>
+      );
+
+      const HomePage = () => {
+        const grouped = BOARDS.map(b => ({ board: b, tasks: todayTasks.filter(t => t.boardId === b.id) })).filter(g => g.tasks.length > 0);
+        return (
+          <div style={{ maxWidth: 800, margin: "0 auto", padding: "24px 16px" }}>
+            <div style={{ marginBottom: 20 }}>
+              <h1 style={{ fontSize: 20, fontWeight: 700, color: "#8a2a4a", margin: 0 }}>🗓 今日のタスク</h1>
+              <p style={{ fontSize: 13, color: "#c48a9a", marginTop: 4 }}>期限3日以内・期限切れ・今日やるマーク済み — 合計 {todayTasks.length}件</p>
+            </div>
+            {todayTasks.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 0", color: "#c48a9a" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>☕</div>
+                <p style={{ fontWeight: 600 }}>今日対応が必要なタスクはありません</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                {grouped.map(({ board, tasks: bTasks }) => (
+                  <div key={board.id}>
+                    <h2 style={{ fontSize: 13, fontWeight: 700, color: "#a04060", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                      {board.icon} {board.label}
+                      <span style={{ background: "#f5d8e0", color: "#a04060", borderRadius: 20, padding: "1px 8px", fontSize: 11 }}>{bTasks.length}</span>
+                    </h2>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>
+                      {bTasks.map(task => {
+                        const d = daysUntil(task.deadline);
+                        const overdue = d !== null && d < 0;
+                        return (
+                          <div key={task.id} style={{ background: "#fdf0f4", border: "1px solid #f0c0d0", borderRadius: 12, padding: "12px 14px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: "#6a1a34" }}>{task.title}</span>
+                              <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                                <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, background: PRIORITY_THEME[task.priority].bg, border: `1px solid ${PRIORITY_THEME[task.priority].border}`, color: PRIORITY_THEME[task.priority].text, fontWeight: 600 }}>{task.priority}</span>
+                                <button onClick={() => moveTask(task.id, "完了")}
+                                  style={{ fontSize: 11, background: "#d4688a", color: "#fff", border: "none", borderRadius: 20, padding: "3px 10px", cursor: "pointer", fontWeight: 600 }}>✓ 完了</button>
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                              {task.client && <span style={{ fontSize: 11, color: "#c05070" }}>{task.client}</span>}
+                              {task.deadline && (
+                                <span style={{ fontSize: 11, fontWeight: 600, color: overdue ? "#8a3a30" : d === 0 ? "#a03060" : "#8a4060" }}>
+                                  📅 {fmtDate(task.deadline)}{overdue ? " 期限切れ!" : d === 0 ? " 今日!" : ` あと${d}日`}
+                                </span>
+                              )}
+                            </div>
+                            {task.memo && <p style={{ fontSize: 11, color: "#c090a0", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.memo}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const BoardPage = ({ boardId }) => {
+        const board = BOARDS.find(b => b.id === boardId);
+        const bt = BOARD_THEME[boardId];
+        const boardClients = clients[boardId] || [];
+        const ac = getAC(boardId);
+        const activeCount = tasks.filter(t => t.boardId === boardId && t.status !== "完了").length;
+        const btnStyle = (active) => ({
+          fontSize: 12, padding: "5px 14px", borderRadius: 20, border: "none", cursor: "pointer", fontWeight: 600,
+          background: active ? bt.main : "#f0ece4", color: active ? "#fff" : "#6b5e48",
+        });
+        return (
+          <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 28 }}>{board.icon}</span>
+                <div>
+                  <h1 style={{ fontSize: 20, fontWeight: 700, color: "#3d3528", margin: 0 }}>{board.label}</h1>
+                  <p style={{ fontSize: 12, color: "#9a8a74", margin: 0 }}>{activeCount}件のアクティブタスク</p>
+                </div>
+              </div>
+              <button onClick={() => setForm({ boardId, editTask: null })}
+                style={{ background: bt.main, color: "#fff", border: "none", borderRadius: 10, padding: "8px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                ＋ タスク追加
+              </button>
+            </div>
+            {board.hasTabs && (
+              <div style={{ background: "#faf8f4", border: "1px solid #d4c9b0", borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                <p style={{ fontSize: 11, color: "#9a8a74", fontWeight: 600, marginBottom: 8 }}>顧問先管理</p>
+                <ClientManager clients={boardClients} onChange={(arr) => setClientsFor(boardId, arr)} />
+              </div>
+            )}
+            {board.hasTabs && boardClients.length > 0 && (
+              <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                <button onClick={() => setActiveClient(ac => ({ ...ac, [boardId]: null }))} style={btnStyle(!ac)}>すべて</button>
+                {boardClients.map(c => (
+                  <button key={c} onClick={() => setActiveClient(prev => ({ ...prev, [boardId]: c }))} style={btnStyle(ac === c)}>
+                    {c} ({tasks.filter(t => t.boardId === boardId && t.client === c && t.status !== "完了").length})
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: "#9a8a74" }}>並び替え：</span>
+              {[["", "デフォルト"], ["priority", "優先度順"], ["deadline", "期限順"]].map(([val, label]) => (
+                <button key={val} onClick={() => setSortBy(val)}
+                  style={{ fontSize: 12, padding: "4px 12px", borderRadius: 20, border: "1px solid #d4c9b0", cursor: "pointer",
+                    background: sortBy === val ? "#c8a820" : "#f5f0e8", color: sortBy === val ? "#fff" : "#6b5e48", fontWeight: sortBy === val ? 600 : 400 }}>
+                  {label}
+                </button>
+              ))}
+              <span style={{ color: "#d4c9b0", margin: "0 2px" }}>｜</span>
+              <span style={{ fontSize: 12, color: "#9a8a74" }}>優先度：</span>
+              <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
+                style={{ fontSize: 12, border: "1px solid #d4c9b0", borderRadius: 20, padding: "4px 12px", background: "#f5f0e8", color: "#6b5e48", outline: "none" }}>
+                <option value="">すべて</option>
+                {PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <KanbanBoard
+              boardId={boardId}
+              tasks={tasks.filter(t => t.boardId === boardId)}
+              onAdd={(bid) => setForm({ boardId: bid, editTask: null })}
+              onEdit={(task) => setForm({ boardId, editTask: task })}
+              onDelete={deleteTask}
+              onMove={moveTask}
+              filterClient={board.hasTabs ? ac : null}
+              sortBy={sortBy}
+              filterPriority={filterPriority}
+            />
+          </div>
+        );
+      };
+
+      return (
+        <div style={{ minHeight: "100vh", background: "#faf8f4", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+          <NavBar />
+          <main>
+            {page === "home"    && <HomePage />}
+            {page === "office"  && <BoardPage boardId="office" />}
+            {page === "ue"      && <BoardPage boardId="ue" />}
+            {page === "others"  && <BoardPage boardId="others" />}
+            {page === "private" && <BoardPage boardId="private" />}
+          </main>
+          {form && (
+            <TaskForm boardId={form.boardId} clients={clients[form.boardId] || []} editTask={form.editTask} onSave={handleSave} onClose={() => setForm(null)} />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
