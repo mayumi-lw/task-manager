@@ -58,7 +58,14 @@
       const jst = new Date(now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
       return new Date(jst.getFullYear(), jst.getMonth(), jst.getDate());
     }
-    function daysUntil(d) { if (!d) return null; return Math.ceil((new Date(d) - today()) / 86400000); }
+    function daysUntil(d) {
+      if (!d) return null;
+      const target = new Date(d + "T00:00:00+09:00");
+      const now = new Date();
+      const jst = new Date(now.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }));
+      const t = new Date(jst.getFullYear(), jst.getMonth(), jst.getDate());
+      return Math.ceil((target - t) / 86400000);
+    }
     function isUrgent(t) { if (t.status === "完了") return false; const d = daysUntil(t.deadline); return d !== null && d <= 3; }
     function fmtDate(d) { if (!d) return ""; const dt = new Date(d + "T00:00:00+09:00"); return `${dt.getMonth()+1}/${dt.getDate()}`; }
 
